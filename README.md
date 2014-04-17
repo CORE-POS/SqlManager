@@ -1,0 +1,4 @@
+SqlManager
+==========
+
+SQL abstraction class. 
