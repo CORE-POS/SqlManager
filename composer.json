@@ -1,0 +1,21 @@
+{
+    "name": "gohanman/sql-manager",
+    "description": "A SQL abstraction class that handles multiple simultaneous connections to different databases.",
+    "license": "GPL",
+    "authors": [
+        {
+            "name": "Andy Theuninck",
+            "email": "andy@gohanman.com"
+        }
+    ],
+    "repositories" : [
+        {
+            "type": "vcs",
+            "url": "https://github.com/gohanman/ADOdb.git"
+        }
+
+    ],
+    "require": {
+        "adodb/adodb-php": "dev-master"
+    }
+}

@@ -9,9 +9,6 @@
  across two servers that are useful for lane-server
  communication
 */
-if (!function_exists("ADONewConnection")) {
-    include(dirname(__FILE__).'/noauto/adodb5/adodb.inc.php');
-}
 
 class SqlManager 
 {
