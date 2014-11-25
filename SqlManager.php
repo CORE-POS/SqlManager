@@ -16,9 +16,11 @@
  Custom SQL abstraction based on ADOdb.
  Provides some limited functionality for queries
  across two servers that are useful for lane-server
- communication */
+ communication 
+*/
 
-class SqlManager {
+class SqlManager 
+{
     private $QUERY_LOG;
 
     /** Array of connections **/
@@ -348,45 +350,6 @@ class SqlManager {
     }
 
     /**
-      Start a transaction
-      @param $which_connection see method close()
-    */
-    public function startTransaction($which_connection='')
-    {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-
-        return $this->connections[$which_connection]->BeginTrans();
-    }
-
-    /**
-      Finish a transaction
-      @param $which_connection see method close()
-    */
-    public function commitTransaction($which_connection='')
-    {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-
-        return $this->connections[$which_connection]->CommitTrans();
-    }
-
-    /**
-      Abort a transaction
-      @param $which_connection see method close()
-    */
-    public function rollbackTransaction($which_connection='')
-    {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-
-        return $this->connections[$which_connection]->RollbackTrans();
-    }
-
-    /**
       Get next record from a result set but as an object
       @param $result_object A result set
       @param $which_connection see method close()
@@ -695,6 +658,45 @@ class SqlManager {
     }
 
     /**
+      Start a transaction
+      @param $which_connection see method close()
+    */
+    public function startTransaction($which_connection='')
+    {
+        if ($which_connection == '') {
+            $which_connection = $this->default_db;
+        }
+
+        return $this->connections[$which_connection]->BeginTrans();
+    }
+
+    /**
+      Finish a transaction
+      @param $which_connection see method close()
+    */
+    public function commitTransaction($which_connection='')
+    {
+        if ($which_connection == '') {
+            $which_connection = $this->default_db;
+        }
+
+        return $this->connections[$which_connection]->CommitTrans();
+    }
+
+    /**
+      Abort a transaction
+      @param $which_connection see method close()
+    */
+    public function rollbackTransaction($which_connection='')
+    {
+        if ($which_connection == '') {
+            $which_connection = $this->default_db;
+        }
+
+        return $this->connections[$which_connection]->RollbackTrans();
+    }
+
+    /**
        Copy a table from one database to another, not necessarily on
        the same server or format.
     
@@ -746,10 +748,16 @@ class SqlManager {
         }
 
         $ret = true;
+        $this->startTransaction($dest_db);
         foreach ($queries as $q) {
             if(!$this->query($q,$dest_db)) {
                 $ret = false;
             }
+        }
+        if ($ret === true) {
+            $this->commitTransaction($dest_db);
+        } else {
+            $this->rollbackTransaction($dest_db);
         }
 
         return $ret;
@@ -1086,6 +1094,11 @@ class SqlManager {
         if ($which_connection == '') {
             $which_connection=$this->default_db;
         }
+
+        if (count($this->connections) == 0) {
+            return false;
+        }
+
         $query ='';
         switch($this->connections[$which_connection]->databaseType) {
             case 'mysql':
