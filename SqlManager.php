@@ -2,9 +2,7 @@
 
 /**
   If Composer's autoloader is not active but is available
-  within the package directory, include it
-*/
-if (
+  within the package directory, include it */ if (
     !class_exists('\\Composer\\Autoload\\ClassLoader', false) &&
     file_exists(dirname(__FILE__) . '/vendor/autoload.php')
     ) {
@@ -18,12 +16,10 @@ if (
  Custom SQL abstraction based on ADOdb.
  Provides some limited functionality for queries
  across two servers that are useful for lane-server
- communication
-*/
+ communication */
 
-class SqlManager 
-{
-	private $QUERY_LOG; 
+class SqlManager {
+	private $QUERY_LOG;
 
 	/** Array of connections **/
 	public $connections;
@@ -115,14 +111,14 @@ class SqlManager
     /**
       Verify object is connected to the database
       @param $which_connection [string] database name (optional)
-      @return [boolean] 
+      @return [boolean]
     */
     public function isConnected($which_connection='')
     {
 		if ($which_connection == '') {
 			$which_connection=$this->default_db;
         }
-        if (isset($this->connections[$which_connection]) && 
+        if (isset($this->connections[$which_connection]) &&
             is_object($this->connections[$which_connection])) {
             return true;
         } else {
@@ -336,6 +332,45 @@ class SqlManager
     {
         return $this->fetchArray($result_object, $which_connection);
     }
+
+	/**
+	  Start a transaction
+	  @param $which_connection see method close()
+	*/
+	public function startTransaction($which_connection='')
+    {
+		if ($which_connection == '') {
+			$which_connection = $this->default_db;
+        }
+
+		return $this->connections[$which_connection]->BeginTrans();
+	}
+
+	/**
+	  Finish a transaction
+	  @param $which_connection see method close()
+	*/
+	public function commitTransaction($which_connection='')
+    {
+		if ($which_connection == '') {
+			$which_connection = $this->default_db;
+        }
+
+		return $this->connections[$which_connection]->CommitTrans();
+	}
+
+	/**
+	  Abort a transaction
+	  @param $which_connection see method close()
+	*/
+	public function rollbackTransaction($which_connection='')
+    {
+		if ($which_connection == '') {
+			$which_connection = $this->default_db;
+        }
+
+		return $this->connections[$which_connection]->RollbackTrans();
+	}
 
 	/**
 	  Get next record from a result set but as an object
@@ -645,7 +680,7 @@ class SqlManager
         return $this->fetchField($result_object, $index, $which_connection);
     }
 
-	/** 
+	/**
 	   Copy a table from one database to another, not necessarily on
 	   the same server or format.
 	
@@ -677,7 +712,7 @@ class SqlManager
 			for ($i=0; $i<$num_fields; $i++) {
 				$type = $this->fieldType($result,$i,$source_db);
 				if ($row[$i] == "" && strstr(strtoupper($type),"INT")) {
-					$row[$i] = 0;	
+					$row[$i] = 0;
 				} elseif ($row[$i] == "" && isset($unquoted[$type])) {
 					$row[$i] = 0;
                 }
@@ -813,7 +848,7 @@ class SqlManager
     {
 		$stdFmt = "/(\d\d\d\d)-(\d\d)-(\d\d) (\d+?):(\d\d):(\d\d)/";
 		if (preg_match($stdFmt,$str,$group)) {
-			return $str;	
+			return $str;
         }
 
 		$msqlFmt = "/(\w\w\w) (\d\d) (\d\d\d\d) (\d+?):(\d\d)(\w)M/";
@@ -861,7 +896,7 @@ class SqlManager
 		return $ret;
 	}
 
-	/** 
+	/**
 	   Check whether the given table exists
 	   @param $table_name The table's name
 	   @param which_connection see method close
@@ -1070,7 +1105,7 @@ class SqlManager
 	}
 
 	/**
-	  Get name of database driver 
+	  Get name of database driver
 	  @param which_connection see method close
 	  @return String name
 	*/
@@ -1146,7 +1181,7 @@ class SqlManager
         return $this->affectedRows($which_connection);
     }
 
-	/** 
+	/**
 	  Insert as much data as possible
 	  @param $table_name Table to insert into
 	  @param $values An array of column name => column value
@@ -1200,7 +1235,7 @@ class SqlManager
         return $this->smartInsert($table_name, $values, $which_connection);
     }
 
-	/** 
+	/**
 	  Update as much data as possible
 	  @param $table_name The table to update
 	  @param $values An array of column name => column value
@@ -1213,7 +1248,7 @@ class SqlManager
 
 	  Caveat: There are a couple places this could break down
 	   - If your WHERE clause requires a column that doesn't exist,
-	     the query will fail. No way around it. Auto-modifying 
+	     the query will fail. No way around it. Auto-modifying
 	     WHERE clauses seems like a terrible idea
 	   - This only works with a single table. Updates involving joins
 	     are rare in the code base though.
@@ -1262,7 +1297,7 @@ class SqlManager
 
 	/**
 	  Create a prepared statement
-	  @param $sql SQL expression	
+	  @param $sql SQL expression
 	  @param which_connection see method close
 	  @return
 	    - If ADOdb supports prepared statements, an
@@ -1296,7 +1331,7 @@ class SqlManager
 	  @param which_connection see method close
 	  @return same as SQLManager::query
 
-	  This is essentially a helper function to flip the 
+	  This is essentially a helper function to flip the
 	  parameter order on SQLManager::query so existing code
 	  works as expected
 	*/
@@ -1317,8 +1352,8 @@ class SqlManager
         return $this->execute($sql, $input_array, $which_connection);
     }
 
-	/** 
-	  See if a datetime is on a given date using BETWEEN	
+	/**
+	  See if a datetime is on a given date using BETWEEN
 	  @param $col datetime expression
 	  @param $dateStr String date
 	  @return SQL BETWEEN comparision
@@ -1358,8 +1393,8 @@ class SqlManager
 	/**
 	   Log a string to the query log.
 	   @param $str The string
-	   @return A True on success, False on failure 
-	*/  
+	   @return A True on success, False on failure
+	*/
 	public function logger($str)
     {
 		$ql = $this->QUERY_LOG;
