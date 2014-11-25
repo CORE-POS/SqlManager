@@ -1383,6 +1383,31 @@ class SqlManager
         return $matches;
     }
 
+    /**
+      Get list of columns that exist in both tables
+      @param $table1 [string] name of first table
+      @param $which_connection1 [string] name of first database connection
+      @param $table2 [string] name of second table
+      @param $which_connection2 [string] name of second database connection
+      @return [string] list of column names or [boolean] false
+    */
+    public function getMatchingColumns($table1, $which_connection1, $table2, $which_connection2)
+    {
+        $ret = '';
+        $def1 = $this->tableDefinition($table1, $which_connection1);
+        $def2 = $this->tableDefinition($table2, $which_connection2);
+        foreach ($def1 as $column_name => $info) {
+            if (isset($def2[$column_name])) {
+                $ret .= $column_name . ',';
+            }
+        }
+        if ($ret === '') {
+            return false;
+        } else {
+            return substr($ret, 0, strlen($ret)-1);
+        }
+    }
+
 	// skipping fetch_cell on purpose; generic-db way would be slow as heck
 
 	/* end compat Brad's class */
