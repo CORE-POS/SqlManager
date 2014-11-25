@@ -1309,7 +1309,7 @@ class SqlManager
                 $col_name = $k;
                 $vals .= '?,';
                 $args[] = $v;
-                $cols .= $this->identifierEscape($col_name, $which_connection);
+                $cols .= $this->identifierEscape($col_name, $which_connection) . ',';
             } else {
                 // implication: column isn't in the table
             }
