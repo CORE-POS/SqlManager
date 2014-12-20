@@ -44,7 +44,7 @@ class SqlManager
         @param $persistent Make persistent connection.
         @param $new Force new connection
     */
-    public function SqlManager($server,$type,$database,$username,$password='',$persistent=false, $new=false)
+    public function __construct($server,$type,$database,$username,$password='',$persistent=false, $new=false)
     {
         $this->QUERY_LOG = dirname(__FILE__) . '/log/queries.log';
         $this->connections=array();
