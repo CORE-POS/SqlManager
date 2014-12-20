@@ -1,0 +1,12 @@
+language: php
+services:
+    - mysql
+php:
+    - 5.3
+
+install:
+    - composer install
+    - mysql -u root -e 'CREATE DATABASE unit_test_sql_manager;'
+
+env:
+    - DB_DRIVER=pdo_mysql

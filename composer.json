@@ -1,7 +1,7 @@
 {
-    "name": "gohanman/sql-manager",
+    "name": "core-pos/sql-manager",
     "description": "A SQL abstraction class that handles multiple simultaneous connections to different databases.",
-    "license": "GPL",
+    "license": "GPL-2.0",
     "authors": [
         {
             "name": "Andy Theuninck",
@@ -17,6 +17,9 @@
     ],
     "require": {
         "adodb/adodb-php": "dev-master"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "~4.4"
     },
     "autoload": {
         "psr-0": { "SqlManager": "" }
