@@ -10,3 +10,4 @@ install:
 
 env:
     - DB_DRIVER=pdo_mysql
+    - DB_DRIVER=mysqli
