@@ -5,9 +5,12 @@ php:
     - 5.3
 
 install:
-    - composer install
+    - composer install --no-dev
     - mysql -u root -e 'CREATE DATABASE unit_test_sql_manager;'
 
 env:
     - DB_DRIVER=pdo_mysql
     - DB_DRIVER=mysqli
+
+script:
+    - phpunit SqlManager/test/SqlManagerTest.php
