@@ -13,4 +13,4 @@ env:
     - DB_DRIVER=mysqli
 
 script:
-    - phpunit SqlManager/test/SqlManagerTest.php
+    - phpunit test/SqlManagerTest.php
