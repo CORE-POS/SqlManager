@@ -1,12 +1,14 @@
 <?php
 
+namespace COREPOS;
+
 /**
   If Composer's autoloader is not active but is available
   within the package directory, include it */ if (
     !class_exists('\\Composer\\Autoload\\ClassLoader', false) &&
-    file_exists(dirname(__FILE__) . '/vendor/autoload.php')
+    file_exists(dirname(__FILE__) . '/../vendor/autoload.php')
     ) {
-        include(dirname(__FILE__) . '/vendor/autoload.php');
+        include(dirname(__FILE__) . '/../vendor/autoload.php');
 }
 
 /**

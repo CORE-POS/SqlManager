@@ -1,6 +1,8 @@
 <?php
 include_once(dirname(__FILE__).'/../vendor/autoload.php');
-include_once(dirname(__FILE__).'/../SqlManager.php');
+include_once(dirname(__FILE__).'/../src/SqlManager.php');
+
+use COREPOS\SqlManager;
 
 /**
  * @backupGlobals disabled
@@ -12,7 +14,7 @@ class SqlManagerTest extends PHPUnit_Framework_TestCase
         $sql = new SqlManager('localhost', $driver, 'unit_test_sql_manager', 'root', '');
 
         /* test create connection */
-        $this->assertInstanceOf('SqlManager',$sql);
+        $this->assertInstanceOf('\\COREPOS\\SqlManager',$sql);
         $this->assertObjectHasAttribute('connections',$sql);
         $this->assertInternalType('array',$sql->connections);
         $this->assertArrayHasKey('unit_test_sql_manager',$sql->connections);
