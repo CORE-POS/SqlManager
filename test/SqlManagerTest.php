@@ -16,7 +16,7 @@ class SqlManagerTest extends PHPUnit_Framework_TestCase
         $this->assertObjectHasAttribute('connections',$sql);
         $this->assertInternalType('array',$sql->connections);
         $this->assertArrayHasKey('unit_test_sql_manager',$sql->connections);
-        $this->assertInstanceOf('ADOConnection',$sql->connections['']);
+        $this->assertInstanceOf('ADOConnection',$sql->connections['unit_test_sql_manager']);
         
         /* test query */
         $result = $sql->query("SELECT 1 as one");
