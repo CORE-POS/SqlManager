@@ -28,8 +28,10 @@ if (!class_exists('\\COREPOS\\SqlManagerCommonBase')) {
  communication 
 */
 
-class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
+class SqlManagerDoctrine extends SqlManagerCommonBase implements SqlManagerInterface
 {
+     private $most_recent_statement = null; 
+
     /** Constructor
         @param $server Database server host
         @param $type Database type. Most supported are
@@ -69,39 +71,46 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
             return false;
         }
 
-        $conn = ADONewConnection($type);
-        $conn->SetFetchMode(ADODB_FETCH_BOTH);
+        $connectionParams = array(
+            'dbname' => $database,
+            'user' => $username,
+            'password' => $password,
+            'host' => $server,
+            'driver' => $type,
+        );
+
+        /**
+          First just try a regular connection
+        */
         $ok = false;
-        if (isset($this->connections[$database]) || $new) {
-            $ok = $conn->NConnect($server,$username,$password,$database);
-        } else {
-            if ($persistent) {
-                $ok = $conn->PConnect($server,$username,$password,$database);
-            } else {
-                $ok = $conn->Connect($server,$username,$password,$database);
-            }
+        try {
+            $conn = \Doctrine\DBAL\DriverManager::getConnection($connectionParams);
+            $ok = true;
+            $this->connections[$database] = $conn;
+        } catch (\Exception $e) {
+            $ok = false;
+            $this->connections[$database] = false;
         }
-        $this->connections[$database] = $conn;
 
+        /** if connection fails, try connecting without
+            specifiying a database, then creating and
+            selecting that database **/
         if (!$ok) {
-            $conn = ADONewConnection($type);
-            $conn->SetFetchMode(ADODB_FETCH_BOTH);
-            $ok = $conn->Connect($server,$username,$password);
-            if ($ok) {
-                $stillok = $conn->Execute("CREATE DATABASE $database");
-                if (!$stillok) {
-                    $this->connections[$database] = false;
-                    return false;
+            try {
+                unset($connectionParams['dbname']);
+                $conn = \Doctrine\DBAL\DriverManager::getConnection($connectionParams);
+                $created = $conn->getSchemaManager()->createDatabase($database);
+                if ($created && $conn->query('USE ' . $conn->quoteIdentifier)) {
+                    $ok = true;
+                    $this->connections[$database] = $conn;
                 }
-                $conn->Execute("USE $database");
-                $this->connections[$database] = $conn;
-            } else {
+            } catch (\Exception $e) {
+                $ok = false;
                 $this->connections[$database] = false;
-                return false;
             }
         }
 
-        return true;
+        return $ok;
     }
 
     /**
@@ -111,11 +120,8 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function isConnected($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-        if (isset($this->connections[$which_connection]) &&
-            is_object($this->connections[$which_connection])) {
+        $obj = $this->whichConnection($which_connection);
+        if (is_object($obj) && $obj instanceof \Doctrine\DBAL\Connection) {
             return true;
         } else {
             return false;
@@ -136,7 +142,7 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
         $con = $this->connections[$which_connection];
         unset($this->connections[$which_connection]);
 
-        return $con->Close();
+        return $con->close();
     }
 
     public function setDefaultDB($db_name)
@@ -148,8 +154,7 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
 
         $this->default_db = $db_name;
         if ($this->isConnected()) {
-            $this->query('use ' . $db_name, $db_name);
-            $this->connections[$db_name]->database = $db_name;
+            $this->query('use ' . $this->identifierEscape($db_name), $db_name);
         }
     }
 
@@ -159,21 +164,39 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
       @param which_connection see method close
       @return A result object on success, False on failure
     */
-    public function query($query_text,$which_connection='',$params=false)
+    public function query($query_text, $which_connection='', $params=false)
     {
         $ql = $this->QUERY_LOG;
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
+        $con = $this->whichConnection($which_connection);
+        $ok = false;
+        $stmt = false;
+        if ($params === false || !is_array($params)) {
+            $params = array();
         }
-        $con = $this->connections[$which_connection];
 
-        $ok = (!is_object($con)) ? false : $con->Execute($query_text,$params);
-        if (!$ok) {
-
-            if (is_array($query_text)) {
-                $query_text = $query_text[0];
+        if (is_object($con)) {
+            if (!$query_text instanceof \Doctrine\DBAL\Statement) {
+                $stmt = $con->prepare($query_text); 
+            } else {
+                $stmt = $query_text;
             }
+            for ($i=0; $i<count($params); $i++) {
+                // binding is 1-indexed
+                $stmt->bindValue($i+1, $params[$i]);
+            }
+            try {
+                $ok = $stmt->execute();
+            } catch (\Exception $e) {
+                $ok = false;
+            } 
 
+            $this->most_recent_statement = $stmt;
+        }
+
+        if (!$ok) {
+            if ($query_text instanceof \Doctrine\DBAL\Statement) {
+                $query_text = serialize($query_text);
+            }
             $errorMsg = $_SERVER['PHP_SELF'] . ': ' . date('r') . ': ' . $query_text . "\n";
             $errorMsg .= $this->error($which_connection) . "\n\n";
 
@@ -186,11 +209,12 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
             }
 
             if ($this->throw_on_fail) {
-                throw new Exception($errorMsg);
+                throw new \Exception($errorMsg);
             }
-        }
+        } else {
 
-        return $ok;
+            return $stmt;
+        }
     }
 
     /**
@@ -221,28 +245,16 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function escape($query_text,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
+        $con = $this->whichConnection($which_connection);
 
-        return $this->connections[$which_connection]->qstr($query_text);
+        return $con->quote($query_text);
     }
 
     public function identifierEscape($str,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-        switch($this->connections[$which_connection]->databaseType) {
-            case 'mysql':
-            case 'mysqli':
-            case 'pdo':
-                return '`'.$str.'`';
-            case 'mssql':
-                return '['.$str.']';
-        }
+        $con = $this->whichConnection($which_connection);
 
-        return $str;
+        return $con->quoteIdentifier($query_text);
     }
     
     /**
@@ -251,13 +263,9 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
       @param $which_connection see method close()
       @return Integer number or False if there's an error
     */
-    public function numRows($result_object,$which_connection='')
+    public function numRows($result_object, $which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-
-        return $result_object->RecordCount();
+        return $result_object->rowCount();
     }
 
     /**
@@ -269,11 +277,8 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function dataSeek($result_object,$rownum,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-
-        return $result_object->Move((int)$rownum);
+        // not implemented in doctrine
+        return false;
     }
 
     /**
@@ -284,11 +289,7 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function numFields($result_object,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-
-        return $result_object->FieldCount();
+        return $result_object->columnCount();
     }
 
     /**
@@ -299,18 +300,11 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function fetchArray($result_object,$which_connection='')
     {
-        if (is_null($result_object)) return false;
-        if ($result_object === false) return false;
-
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
+        if ($result_object instanceof \Doctrine\DBAL\Statement) {
+            return $result_object->fetch(\PDO::FETCH_BOTH);
+        } else {
+            return false;
         }
-        $ret = $result_object->fields;
-        if ($result_object) {
-            $result_object->MoveNext();
-        }
-
-        return $ret;
     }
 
     /**
@@ -321,7 +315,11 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function fetchObject($result_object,$which_connection='')
     {
-        return $result_object->FetchNextObject(False);
+        if ($result_object instanceof \Doctrine\DBAL\Statement) {
+            return $result_object->fetch(\PDO::FETCH_OBJ);
+        } else {
+            return false;
+        }
     }
     
     /**
@@ -334,11 +332,9 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function now($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
+        $obj = $this->whichConnection($which_connection);
 
-        return $this->connections[$which_connection]->sysTimeStamp;
+        return $obj->getDatabasePlatform()->getNowExpression();
     }
 
     /**
@@ -351,11 +347,18 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function curdate($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
+        $obj = $this->whichConnection($which_connection);
+
+        switch (strtolower($obj->getDriver()->getName())) {
+            case 'mysqli':
+            case 'pdo_mysql':
+                return 'CURDATE()';
+            case 'sqlsrv':
+            case 'pdo_sqlsrv':
+                return 'GETDATE()';
         }
 
-        return $this->connections[$which_connection]->sysDate;
+        return false;
     }
 
     /**
@@ -372,17 +375,9 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function datediff($date1,$date2,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-        switch($this->connections[$which_connection]->databaseType) {
-            case 'mysql':
-            case 'mysqli':
-            case 'pdo':
-                return "datediff($date1,$date2)";
-            case 'mssql':
-                return "datediff(dd,$date2,$date1)";
-        }
+        $obj = $this->whichConnection($which_connection);
+
+        return $obj->getDatabasePlatform()->getDateDiffExpression($date1, $date2);
     }
 
     /**
@@ -400,15 +395,14 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
 
     public function monthdiff($date1,$date2,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-        switch($this->connections[$which_connection]->databaseType) {
-            case 'mysql':
+        $obj = $this->whichConnection($which_connection);
+
+        switch (strtolower($obj->getDriver()->getName())) {
             case 'mysqli':
-            case 'pdo':
+            case 'pdo_mysql':
                 return "period_diff(date_format($date1, '%Y%m'), date_format($date2, '%Y%m'))";
-            case 'mssql':
+            case 'sqlsrv':
+            case 'pdo_sqlsrv':
                 return "datediff(mm,$date2,$date1)";
         }
     }
@@ -424,15 +418,14 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function seconddiff($date1,$date2,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-        switch($this->connections[$which_connection]->databaseType) {
-            case 'mysql':
+        $obj = $this->whichConnection($which_connection);
+
+        switch (strtolower($obj->getDriver()->getName())) {
             case 'mysqli':
-            case 'pdo':
+            case 'pdo_mysql':
                 return "TIMESTAMPDIFF(SECOND,$date1,$date2)";
-            case 'mssql':
+            case 'sqlsrv':
+            case 'pdo_sqlsrv':
                 return "datediff(ss,$date2,$date1)";
         }
     }
@@ -447,15 +440,14 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function dateymd($date1,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-        switch($this->connections[$which_connection]->databaseType) {
-            case 'mysql':
+        $obj = $this->whichConnection($which_connection);
+
+        switch (strtolower($obj->getDriver()->getName())) {
             case 'mysqli':
-            case 'pdo':
+            case 'pdo_mysql':
                 return "DATE_FORMAT($date1,'%Y%m%d')";
-            case 'mssql':
+            case 'sqlsrv':
+            case 'pdo_sqlsrv':
                 return "CONVERT(CHAR(11),$date1,112)";
         }
     }
@@ -472,18 +464,17 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function convert($expr,$type,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-        switch($this->connections[$which_connection]->databaseType) {
-            case 'mysql':
+        $obj = $this->whichConnection($which_connection);
+
+        switch (strtolower($obj->getDriver()->getName())) {
             case 'mysqli':
-            case 'pdo':
+            case 'pdo_mysql':
                 if(strtoupper($type)=='INT') {
                     $type='SIGNED';
                 }
                 return "CONVERT($expr,$type)";
-            case 'mssql':
+            case 'sqlsrv':
+            case 'pdo_sqlsrv':
                 return "CONVERT($type,$expr)";
         }
 
@@ -496,24 +487,12 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
       @param $str Target string (haystack)
       @param $which_connection see method close()
       @return The SQL expression
-
-      This method currently only supports MySQL and MSSQL
     */
     public function locate($substr,$str,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-        switch($this->connections[$which_connection]->databaseType) {
-            case 'mysql':
-            case 'mysqli':
-            case 'pdo':
-                return "LOCATE($substr,$str)";
-            case 'mssql':
-                return "CHARINDEX($substr,$str)";
-        }
+        $obj = $this->whichConnection($which_connection);
 
-        return "";
+        return $obj->getDatabasePlatform()->getLocateExpression($str, $substr);
     }
 
     /**
@@ -526,36 +505,15 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
       standard $which_connection but in this case it is
       not optional. You may pass the empty string to use
       the default database though.
-
-      This method currently only supports MySQL and MSSQL
     */
     public function concat()
     {
         $args = func_get_args();
-        $ret = "";
-        $which_connection = $args[count($args)-1];
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-        switch($this->connections[$which_connection]->databaseType) {
-            case 'mysql':
-            case 'mysqli':
-            case 'pdo':
-                $ret .= "CONCAT(";
-                for($i=0;$i<count($args)-1;$i++) {
-                    $ret .= $args[$i].",";
-                }
-                $ret = rtrim($ret,",").")";
-            break;
-            case 'mssql':
-                for($i=0;$i<count($args)-1;$i++) {
-                    $ret .= $args[$i]."+";
-                }
-                $ret = rtrim($ret,"+");
-            break;
-        }
+        $which_connection = array_pop($args);
+        $con = $this->whichConnection($which_connection);
+        $platform = $con->getDatabasePlatform();
 
-        return $ret;
+        return call_user_func_array(array($platform, 'getConcatExpression'), $args);
     }
 
     /**
@@ -569,15 +527,14 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function weekdiff($date1,$date2,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-        switch($this->connections[$which_connection]->databaseType) {
-            case 'mysql':
+        $obj = $this->whichConnection($which_connection);
+
+        switch (strtolower($obj->getDriver()->getName())) {
             case 'mysqli':
-            case 'pdo':
+            case 'pdo_mysql':
                 return "week($date1) - week($date2)";
-            case 'mssql':
+            case 'sqlsrv':
+            case 'pdo_sqlsrv':
                 return "datediff(wk,$date2,$date1)";
         }
     }
@@ -591,11 +548,18 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function fetchField($result_object,$index,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
+        $raw = $result_object->getWrappedStatement();
+        if (method_exists($raw, 'getColumnMeta')) {
+            $info = $raw->getColumnMeta($index);
+            $ret = new \stdClass();
+            $ret->name = $info['name'];
+            $ret->type = $info['native_type'];
+            $ret->max_length = $info['len'];
 
-        return $result_object->FetchField($index);
+            return $ret;
+        } else {
+            return false;
+        }
     }
 
     /**
@@ -604,11 +568,9 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function startTransaction($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
+        $obj = $this->whichConnection($which_connection);
 
-        return $this->connections[$which_connection]->BeginTrans();
+        return $obj->beginTransaction();
     }
 
     /**
@@ -617,11 +579,9 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function commitTransaction($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
+        $obj = $this->whichConnection($which_connection);
 
-        return $this->connections[$which_connection]->CommitTrans();
+        return $obj->commit();
     }
 
     /**
@@ -630,11 +590,9 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function rollbackTransaction($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
+        $obj = $this->whichConnection($which_connection);
 
-        return $this->connections[$which_connection]->RollbackTrans();
+        return $obj->rollback();
     }
 
     /**
@@ -713,12 +671,13 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function fieldType($result_object,$index,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-        $fld = $result_object->FetchField($index);
+        $field = $this->fetchField($result_object, $index, $which_connection);
 
-        return $fld->type;
+        if (is_object($field) && property_exists($field, 'type')) {
+            return $field->type;
+        } else {
+            return false;
+        }
     }
 
     /**
@@ -731,7 +690,7 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
         if (is_object($field) && property_exists($field, 'name')) {
             return $field->name;
         } else {
-            return '';
+            return false;
         }
     }
 
@@ -745,18 +704,14 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function dayofweek($field,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-        // ado is inconsistent
-        //$conn = $this->connections[$which_connection];
-        //return $conn->SQLDate("w",$field);
-        switch($this->connections[$which_connection]->databaseType) {
-            case 'mysql':
+        $obj = $this->whichConnection($which_connection);
+
+        switch (strtolower($obj->getDriver()->getName())) {
             case 'mysqli':
-            case 'pdo':
+            case 'pdo_mysql':
                 return "DATE_FORMAT($field,'%w')+1";
-            case 'mssql':
+            case 'sqlsrv':
+            case 'pdo_sqlsrv':
                 return "DATEPART(dw,$field)";
         }
 
@@ -771,12 +726,7 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function hour($field,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-        $conn = $this->connections[$which_connection];
-
-        return $conn->SQLDate("H",$field);
+        return 'HOUR(' . $field . ')';
     }
 
     /**
@@ -787,12 +737,7 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function week($field,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection = $this->default_db;
-        }
-        $conn = $this->connections[$which_connection];
-
-        return $conn->SQLDate("W",$field);
+        return 'WEEK(' . $field . ')';
     }
 
     /**
@@ -865,33 +810,28 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function tableExists($table_name,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-        $conn = $this->connections[$which_connection];
-        $cols = $conn->MetaColumns($table_name);
-        if ($cols === false) return false;
+        $obj = $this->whichConnection($which_connection);
 
-        return true;
+        return $obj->getSchemaManager()->tablesExist(array($table_name));
     }
 
     public function isView($table_name, $which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-
         if (!$this->tableExists($table_name, $which_connection)) {
             return false;
         }
 
-        $conn = $this->connections[$which_connection];
-        $views = $conn->MetaTables('VIEW');
-        if (in_array($table_name, $views)) {
-            return true;
-        } else {
-            return false;
+        $obj = $this->whichConnection($which_connection);
+        $views = $obj->getSchemaManager()->listViews();
+        foreach ($views as $view) {
+            if ($table_name == $view->getName()) {
+                return true;
+            } elseif ($table_name == $view->getQuotedName()) {
+                return true;
+            }
         }
+
+        return false;
     }
 
 
@@ -906,21 +846,15 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function tableDefinition($table_name,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-        $conn = $this->connections[$which_connection];
-        $cols = $conn->MetaColumns($table_name);
+        $obj = $this->whichConnection($which_connection);
+        $columns = $obj->getSchemaManager()->listTableColumns($table_name);
 
         $return = array();
-        if (is_array($cols)) {
-            foreach($cols as $c) {
-                $return[$c->name] = $c->type;
-            }
-            return $return;
+        foreach ($columns as $c) {
+            $return[$c->getName()] = $c->getType();
         }
 
-        return false;
+        return count($return) == 0 ? false : $return;
     }
 
     /**
@@ -937,56 +871,35 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function detailedDefinition($table_name,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-        $conn = $this->connections[$which_connection];
-        $cols = $conn->MetaColumns($table_name);
+        $obj = $this->whichConnection($which_connection);
+        $columns = $obj->getSchemaManager()->listTableColumns($table_name);
 
         $return = array();
-        if (is_array($cols)) {
-            foreach($cols as $c) {
-                $info = array();
-                $type = strtoupper($c->type);
-                if (property_exists($c, 'max_length') && $c->max_length != -1 && substr($type, -3) != 'INT') {
-                    if (property_exists($c, 'scale') && $c->scale) {
-                        $type .= '(' . $c->max_length . ',' . $c->scale . ')';
-                    } else {
-                        $type .= '(' . $c->max_length . ')';
-                    }
-                }
-                if (property_exists($c, 'unsigned') && $c->unsigned) {
-                    $type .= ' UNSIGNED';
-                }
-                $info['type'] = $type;
-                if (property_exists($c, 'auto_increment') && $c->auto_increment) {
-                    $info['increment'] = true;
-                } else if (property_exists($c, 'auto_increment') && !$c->auto_increment) {
-                    $info['increment'] = false;
-                } else {
-                    $info['increment'] = null;
-                }
-                if (property_exists($c, 'primary_key') && $c->primary_key) {
-                    $info['primary_key'] = true;
-                } else if (property_exists($c, 'primary_key') && !$c->primary_key) {
-                    $info['primary_key'] = false;
-                } else {
-                    $info['primary_key'] = null;
-                }
-
-                if (property_exists($c, 'default_value') && $c->default_value !== 'NULL' && $c->default_value !== null) {
-                    $info['default'] = $c->default_value;
-                } else {
-                    $info['default'] = null;
-                }
-
-                $return[$c->name] = $info;
+        foreach($columns as $c) {
+            $name = $c->getName();
+            $return[$name] = array();
+            $return[$name]['type'] = $c->getType();
+            if ($c->getPrecision() && $c->getScale()) {
+                $return[$name]['type'] .= '(' . $c->getPrecision() . ',' . $c->getScale() . ')';
+            } elseif ($c->getLength()) {
+                $return[$name]['type'] .= '(' . $c->getLength() . ')';
             }
-
-            return $return;
+            $return[$name]['default'] = $c->getDefault();
+            $return[$name]['increment'] = $c->getAutoincrement() ? true : false;
         }
 
-        return false;
+        $indexes = $obj->getSchemaManager()->listTableIndexes($table_name);
+        foreach ($indexes as $i) {
+            if ($i->isPrimary()) {
+                foreach ($i->getColumns as $col) {
+                    if (isset($return[$col])) {
+                        $return[$col]['primary_key'] = true;
+                    }
+                }
+            }
+        }
+
+        return count($return) == 0 ? false : $return;
     }
 
     /**
@@ -995,12 +908,9 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function getTables($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-        $conn = $this->connections[$which_connection];
+        $obj = $this->whichConnection($which_connection);
 
-        return $conn->MetaTables();
+        return $obj->getSchemaManager()->listTableNames();
     }
 
     /**
@@ -1012,22 +922,18 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function defaultDatabase($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-
         if (count($this->connections) == 0) {
             return false;
         }
 
-        $query ='';
-        switch($this->connections[$which_connection]->databaseType) {
-            case 'mysql':
+        $obj = $this->whichConnection($which_connection);
+        switch (strtolower($obj->getDriver()->getName())) {
             case 'mysqli':
-            case 'pdo':
+            case 'pdo_mysql':
                 $query = 'SELECT DATABASE() as dbname';
                 break;
-            case 'mssql':
+            case 'sqlsrv':
+            case 'pdo_sqlsrv':
                 $query = 'SELECT DB_NAME() as dbname';
                 break;
             // postgres is SELECT CURRENT_DATABASE()
@@ -1051,15 +957,13 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function currency($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-        switch($this->connections[$which_connection]->databaseType) {
-            case 'mysql':
+        $obj = $this->whichConnection($which_connection);
+        switch (strtolower($obj->getDriver()->getName())) {
             case 'mysqli':
-            case 'pdo':
+            case 'pdo_mysql':
                 return 'decimal(10,2)';
-            case 'mssql':
+            case 'sqlsrv':
+            case 'pdo_sqlsrv':
                 return 'money';
         }
 
@@ -1076,19 +980,9 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function addSelectLimit($query,$int_limit,$which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-        switch($this->connections[$which_connection]->databaseType) {
-            case 'mysql':
-            case 'mysqli':
-            case 'pdo':
-                return sprintf("%s LIMIT %d",$query,$int_limit);
-            case 'mssql':
-                return str_ireplace("SELECT ","SELECT TOP $int_limit ",$query);
-        }
+        $obj = $this->whichConnection($which_connection);
 
-        return $query;
+        return $obj->getDatabasePlatform()->modifyLimitQuery($query, $int_limit);
     }
 
     /**
@@ -1098,15 +992,13 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function sep($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-        switch($this->connections[$which_connection]->databaseType) {
-            case 'mysql':
+        $obj = $this->whichConnection($which_connection);
+        switch (strtolower($obj->getDriver()->getName())) {
             case 'mysqli':
-            case 'pdo':
+            case 'pdo_mysql':
                 return ".";
-            case 'mssql':
+            case 'sqlsrv':
+            case 'pdo_sqlsrv':
                 return ".dbo.";
         }
 
@@ -1120,11 +1012,9 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function dbmsName($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
+        $obj = $this->whichConnection($which_connection);
 
-        return $this->connections[$which_connection]->databaseType;
+        return strtolower($obj->getDriver()->getName());
     }
 
     /**
@@ -1134,16 +1024,16 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function error($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-        $con = $this->connections[$which_connection];
-
-        if (!is_object($con)) {
-            return 'No database connection';
+        if (!is_object($this->most_recent_statement)) {
+            return 'No recent queries logged';
         }
 
-        return $con->ErrorMsg();
+        $e = $this->most_recent_statement->errorInfo();
+        if (is_array($e)) {
+            return isset($e[2]) && $e[2] ? $e[2] : '';
+        } else {
+            return $e;
+        }
     }
 
     /**
@@ -1153,12 +1043,9 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function insertID($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-        $con = $this->connections[$which_connection];
+        $obj = $this->whichConnection($which_connection);
 
-        return $con->Insert_ID();
+        return $obj->lastInsertId();
     }
 
     /**
@@ -1168,12 +1055,7 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function affectedRows($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-        $con = $this->connections[$which_connection];
-
-        return $con->Affected_Rows();
+        return $this->most_recent_statement ? $this->most_recent_statement->rowCount() : false;
     }
 
     /**
@@ -1295,12 +1177,9 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function prepare($sql,$which_connection="")
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-        $con = $this->connections[$which_connection];
+        $con = $this->whichConnection($which_connection);
 
-        return $con->Prepare($sql);
+        return $con->prepare($sql);
     }
 
     /**
@@ -1317,14 +1196,11 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function execute($sql, $input_array=array(), $which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
         if (!is_array($input_array)) {
             $input_array = array($input_array);
         }
 
-        return $this->query($sql,$which_connection,$input_array);
+        return $this->query($sql, $which_connection, $input_array);
     }
 
     /**
