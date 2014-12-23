@@ -59,44 +59,45 @@ class SqlManagerCommonBase
             return false;
         }
 
-        $num_fields = $this->numFields($result,$source_db);
+        $num_fields = $this->numFields($result, $source_db);
 
         $unquoted = array("money"=>1,"real"=>1,"numeric"=>1,
             "float4"=>1,"float8"=>1,"bit"=>1);
         $strings = array("varchar"=>1,"nvarchar"=>1,"string"=>1,
             "char"=>1);
         $dates = array("datetime"=>1);
-        $queries = array();
 
-        while($row = $this->fetchArray($result,$source_db)) {
+        $queries = array();
+        $arg_sets = array();
+
+        while ($row = $this->fetchArray($result,$source_db)) {
             $full_query = $insert_query." VALUES (";
+            $args = array();
             for ($i=0; $i<$num_fields; $i++) {
-                $type = $this->fieldType($result,$i,$source_db);
-                if ($row[$i] == "" && strstr(strtoupper($type),"INT")) {
-                    $row[$i] = 0;
-                } elseif ($row[$i] == "" && isset($unquoted[$type])) {
-                    $row[$i] = 0;
-                }
-                if (isset($dates[$type])) {
-                    $row[$i] = $this->cleanDateTime($row[$i]);
-                } elseif (isset($strings[$type])) {
-                    $row[$i] = str_replace("'","''",$row[$i]);
-                }
-                if (isset($unquoted[$type])) {
-                    $full_query .= $row[$i].",";
-                } else {
-                    $full_query .= "'".$row[$i]."',";
-                }
+                $full_query .= '?,';
+                $args[] = $this->cleanDateTime($row[$i]);
             }
             $full_query = substr($full_query,0,strlen($full_query)-1).")";
-            array_push($queries,$full_query);
+            $queries[] = $full_query;
+            $arg_sets[] = $args;
         }
+
+        // nothing to transfer
+        if (count($queries) == 0) {
+            return true;
+        }
+
+        // queries are identical; the parameters just
+        // vary by record. Prepare the first one
+        // and loop through the different parameter sets
+        $prep = $this->prepare($queries[0]);
 
         $ret = true;
         $this->startTransaction($dest_db);
-        foreach ($queries as $q) {
-            if(!$this->query($q,$dest_db)) {
+        foreach ($arg_sets as $args) {
+            if (!$this->execute($prep, $args, $dest_db)) {
                 $ret = false;
+                break;
             }
         }
         if ($ret === true) {
@@ -117,6 +118,7 @@ class SqlManagerCommonBase
     */
     public function cleanDateTime($str)
     {
+        // standard datetime format; no change required
         $stdFmt = "/(\d\d\d\d)-(\d\d)-(\d\d) (\d+?):(\d\d):(\d\d)/";
         if (preg_match($stdFmt,$str,$group)) {
             return $str;
@@ -147,6 +149,11 @@ class SqlManagerCommonBase
             "min" => 0
         );
         
+        /**
+          If the weird MSSQL / FreeTDS format matches,
+          rewrite as standard Y-m-d H:i:s
+          Otherwise, return the unmodified string
+        */
         if (preg_match($msqlFmt,$str,$group)) {
             $info["month"] = $months[strtolower($group[1])];
             $info["day"] = $group[2];
@@ -156,6 +163,8 @@ class SqlManagerCommonBase
             if ($group[6] == "P") {
                 $info["hour"] = ($info["hour"] + 12) % 24;
             }
+        } else {
+            return $str;
         }
 
         $ret = $info["year"]."-";
