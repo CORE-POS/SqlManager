@@ -13,9 +13,11 @@ class SqlManagerTest extends PHPUnit_Framework_TestCase
 {
     public function testMethods(){
         $driver = isset($_ENV['DB_DRIVER']) ? $_ENV['pdo_mysql'] : 'pdo_mysql';
+        echo 'Testing driver ' . $driver . "\n";
         $implementations = array('\\COREPOS\\SqlManager', '\\COREPOS\\SqlManagerDoctrine');
         foreach ($implementations as $class) {
             $sql = new $class('localhost', $driver, 'unit_test_sql_manager', 'root', '');
+            echo 'Testing implementation ' . $class . "\n";
 
             /* test create connection */
             $this->assertInstanceOf($class, $sql);
