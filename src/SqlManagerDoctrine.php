@@ -11,12 +11,6 @@ if (
     ) {
         include(dirname(__FILE__) . '/../vendor/autoload.php');
 }
-if (!interface_exists('\\COREPOS\\SqlManagerInterface')) {
-    include(dirname(__FILE__) . '/SqlManagerInterface.php');
-}
-if (!class_exists('\\COREPOS\\SqlManagerCommonBase')) {
-    include(dirname(__FILE__) . '/SqlManagerCommonBase.php');
-}
 
 /**
  @class SqlManager

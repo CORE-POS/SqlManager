@@ -11,12 +11,6 @@ if (
     ) {
         include(dirname(__FILE__) . '/../vendor/autoload.php');
 }
-if (!interface_exists('\\COREPOS\\SqlManagerInterface')) {
-    include(dirname(__FILE__) . '/SqlManagerInterface.php');
-}
-if (!class_exists('\\COREPOS\\SqlManagerCommonBase')) {
-    include(dirname(__FILE__) . '/SqlManagerCommonBase.php');
-}
 
 /**
  @class SqlManager
@@ -162,10 +156,7 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     public function query($query_text,$which_connection='',$params=false)
     {
         $ql = $this->QUERY_LOG;
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-        $con = $this->connections[$which_connection];
+        $con = $this->whichConnection($which_connection);
 
         $ok = (!is_object($con)) ? false : $con->Execute($query_text,$params);
         if (!$ok) {
@@ -1008,10 +999,7 @@ class SqlManager extends SqlManagerCommonBase implements SqlManagerInterface
     */
     public function error($which_connection='')
     {
-        if ($which_connection == '') {
-            $which_connection=$this->default_db;
-        }
-        $con = $this->connections[$which_connection];
+        $con = $this->whichConnection($which_connection);
 
         if (!is_object($con)) {
             return 'No database connection';
