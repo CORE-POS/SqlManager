@@ -169,16 +169,16 @@ class SqlManagerDoctrine extends SqlManagerCommonBase implements SqlManagerInter
         }
 
         if (is_object($con)) {
-            if (!$query_text instanceof \Doctrine\DBAL\Statement) {
-                $stmt = $con->prepare($query_text); 
-            } else {
-                $stmt = $query_text;
-            }
-            for ($i=0; $i<count($params); $i++) {
-                // binding is 1-indexed
-                $stmt->bindValue($i+1, $params[$i]);
-            }
             try {
+                if (!$query_text instanceof \Doctrine\DBAL\Statement) {
+                    $stmt = $con->prepare($query_text); 
+                } else {
+                    $stmt = $query_text;
+                }
+                for ($i=0; $i<count($params); $i++) {
+                    // binding is 1-indexed
+                    $stmt->bindValue($i+1, $params[$i]);
+                }
                 $ok = $stmt->execute();
             } catch (\Exception $e) {
                 $ok = false;
@@ -310,7 +310,12 @@ class SqlManagerDoctrine extends SqlManagerCommonBase implements SqlManagerInter
     public function fetchObject($result_object,$which_connection='')
     {
         if ($result_object instanceof \Doctrine\DBAL\Statement) {
-            return $result_object->fetch(\PDO::FETCH_OBJ);
+            $row = $result_object->fetch(\PDO::FETCH_ASSOC);
+            $ret = new \stdClass();
+            foreach ($row as $key => $value) {
+                $ret->$key = $value;
+            }
+            return $ret;
         } else {
             return false;
         }

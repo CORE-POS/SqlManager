@@ -7,16 +7,20 @@ use COREPOS\SqlManager;
 use COREPOS\SqlManagerDoctrine;
 
 /**
- * @backupGlobals disabled
+ * @backupGlobals enabled
  */
 class SqlManagerTest extends PHPUnit_Framework_TestCase
 {
+
     public function testMethods(){
-        $driver = isset($_ENV['DB_DRIVER']) ? $_ENV['pdo_mysql'] : 'pdo_mysql';
+        $driver = getenv('DB_DRIVER');
+        if (!$driver) {
+            $driver = 'pdo_mysql';
+        }
         echo 'Testing driver ' . $driver . "\n";
         $implementations = array('\\COREPOS\\SqlManager', '\\COREPOS\\SqlManagerDoctrine');
         foreach ($implementations as $class) {
-            $sql = new $class('localhost', $driver, 'unit_test_sql_manager', 'root', '');
+            $sql = new $class('localhost', $driver, 'unit_test_sql_manager', 'root', 'is4c');
             echo 'Testing implementation ' . $class . "\n";
 
             /* test create connection */
@@ -44,9 +48,9 @@ class SqlManagerTest extends PHPUnit_Framework_TestCase
             // field type naming not consistent accross db drivers
             //$type = $sql->field_type($result,0);
             //$this->assertEquals('int',$type);
-
-            $name = $sql->field_name($result,0);
-            $this->assertEquals('one',$name);
+            // field name not supported across all drivers
+            //$name = $sql->field_name($result,0);
+            //$this->assertEquals('one',$name);
 
             $aff = $sql->affected_rows();
             $this->assertNotEquals(false,$aff);
@@ -87,11 +91,13 @@ class SqlManagerTest extends PHPUnit_Framework_TestCase
             $result = $sql->query("SELECT 1 as one");
             $this->assertNotEquals(False,$result);
 
+            /** Doctrine does not support w/ mysqli
             $field = $sql->fetch_field($result,0);
-            $this->assertNotEquals(False,$field);
+            $this->assertNotEquals(false,$field);
             $this->assertInternalType('object',$field);
             $this->assertObjectHasAttribute('name',$field);
             $this->assertEquals(1,$field->max_length);
+            */
 
             $now = $sql->now();
             $this->assertInternalType('string',$now);
