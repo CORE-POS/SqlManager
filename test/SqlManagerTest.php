@@ -20,7 +20,7 @@ class SqlManagerTest extends PHPUnit_Framework_TestCase
         echo 'Testing driver ' . $driver . "\n";
         $implementations = array('\\COREPOS\\SqlManager', '\\COREPOS\\SqlManagerDoctrine');
         foreach ($implementations as $class) {
-            $sql = new $class('localhost', $driver, 'unit_test_sql_manager', 'root', 'is4c');
+            $sql = new $class('localhost', $driver, 'unit_test_sql_manager', 'root', '');
             echo 'Testing implementation ' . $class . "\n";
 
             /* test create connection */
